@@ -36,13 +36,16 @@ class Worker(threading.Thread):
                 logging.info('Worker {} finished with {}'.format(
                     self.__id, addr))
             finally:
+                logging.info('Closing socket...')
+                client_socket.shutdown(socket.SHUT_RDWR)
                 client_socket.close()
                 self.queue.task_done()
+                logging.info('Task done')
 
 
 class MyServer:
 
-    def __init__(self, host: str, port: int, max_workers: int = 3,
+    def __init__(self, host: str, port: int, max_workers: int = 10,
                  timeout: float = 5.0):
         self.host = host
         self.port = port
@@ -78,31 +81,29 @@ class MyServer:
 
     @staticmethod
     def send_answer(data, client_socket):
-        totalsent = 0
-        while totalsent < len(data):
-            sent = client_socket.send(data[totalsent:])
-            if sent == 0:
-                raise RuntimeError('socket connection broken')
-            totalsent = totalsent + sent
+        client_socket.sendall(data)
+        logging.info('Send {} to {}'.format(data, client_socket))
 
     @staticmethod
-    def handle_client_connection(client_socket, chunklen=512):
+    def handle_client_connection(client_socket, chunklen=1024):
         logging.info('Handling request')
         fragments = []
         while True:
             chunk = client_socket.recv(chunklen)
+            logging.info('Got a chunk: {}'.format(chunk))
             if not chunk:
+                logging.info('Breaking (zero chunk)')
                 break
-            fragments.append(chunk)
+            if chunk.decode('utf-8').endswith('\r\n\r\n'):
+                fragments.append(chunk.decode('utf-8'))
+                break
+            fragments.append(chunk.decode('utf-8'))
         request = ''.join(fragments)
         logging.info('Received {}'.format(request))
         MyServer.send_answer(b'ACK!\r\n', client_socket)
-        client_socket.close()
-        return
 
     def serve_forever(self):
         logging.info('Starting workers...')
-        print(self.worker_pool)  # XXX delete
         self.start_workers()
         logging.info('Listening at {}:{}...'.format(self.host, self.port))
         self.server_socket.listen(5)
