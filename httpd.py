@@ -1,20 +1,83 @@
 import socket
 import logging
 import threading
+import uuid
+from queue import Queue
 from optparse import OptionParser
+
+
+class Worker(threading.Thread):
+    """
+    Consumes task from queue.
+    """
+    def __init__(self, queue, handler, _id=str(uuid.uuid4())[:4]):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.handler = handler
+        self.__id = _id
+        self.__shutdown_request = False
+        logging.info('Worker {} inited'.format(self.__id))
+
+    def run(self):
+        logging.info('Worker {} started'.format(self.__id))
+        while not self.__shutdown_request:
+            client_socket, addr = self.queue.get()
+            if client_socket is None and addr is None:
+                break
+            logging.info('Worker {} manages request from {}'.format(
+                self.__id, addr))
+            try:
+                self.handler(client_socket)
+            except Exception as exc:
+                logging.error(
+                    'Worker {} cannot handle {}. Error: {}'.format(
+                        self.__id, addr, exc))
+            else:
+                logging.info('Worker {} finished with {}'.format(
+                    self.__id, addr))
+            finally:
+                client_socket.close()
+                self.queue.task_done()
 
 
 class MyServer:
 
-    def __init__(self, host: str, port: int, max_workers: int = 3):
+    def __init__(self, host: str, port: int, max_workers: int = 3,
+                 timeout: float = 5.0):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.num_workers = max_workers
+        self.max_workers = max_workers
+        self.timeout = timeout
         self.server_socket.bind((self.host, self.port))
         self.__shutdown_request = False
+        self.queue = Queue()
+        self.worker_pool = []
+        assert self.init_workers(), (
+            f'Not all the workers inited '
+            f'({len(self.worker_pool)} of {self.max_workers})'
+        )
 
-    def send_answer(self, data, client_socket):
+    def init_workers(self):
+        for number in range(self.max_workers):
+            self.worker_pool.append(
+                Worker(self.queue, self.handle_client_connection,
+                       _id=(number + 1))
+            )
+        return len(self.worker_pool) == self.max_workers
+
+    def start_workers(self):
+        [worker.start() for worker in self.worker_pool]
+
+    def stop_workers(self):
+        logging.info('Killing workers...')
+        for worker in self.worker_pool:
+            self.queue.put((None, None))
+            worker.__shutdown_request = True
+            worker.join(timeout=0.5)
+
+    @staticmethod
+    def send_answer(data, client_socket):
         totalsent = 0
         while totalsent < len(data):
             sent = client_socket.send(data[totalsent:])
@@ -22,26 +85,38 @@ class MyServer:
                 raise RuntimeError('socket connection broken')
             totalsent = totalsent + sent
 
-    def handle_client_connection(self, client_socket, maxlen=1024):
-        request = client_socket.recv(maxlen)
+    @staticmethod
+    def handle_client_connection(client_socket, chunklen=512):
+        logging.info('Handling request')
+        fragments = []
+        while True:
+            chunk = client_socket.recv(chunklen)
+            if not chunk:
+                break
+            fragments.append(chunk)
+        request = ''.join(fragments)
         logging.info('Received {}'.format(request))
-        self.send_answer(b'ACK!\r\n', client_socket)
+        MyServer.send_answer(b'ACK!\r\n', client_socket)
+        client_socket.close()
+        return
 
     def serve_forever(self):
+        logging.info('Starting workers...')
+        print(self.worker_pool)  # XXX delete
+        self.start_workers()
         logging.info('Listening at {}:{}...'.format(self.host, self.port))
         self.server_socket.listen(5)
         while not self.__shutdown_request:
             client_socket, addr = self.server_socket.accept()
             logging.info('Connected by %r' % repr(addr))
-            client_handler = threading.Thread(
-                target=self.handle_client_connection,
-                args=(client_socket,)
-            )
-            client_handler.start()
+            client_socket.settimeout(self.timeout)
+            self.queue.put((client_socket, addr))
 
     def close(self):
+        logging.info('Got a shutdown request...')
         self.__shutdown_request = True
         self.server_socket.close()
+        self.stop_workers()
 
 
 if __name__ == '__main__':
