@@ -11,10 +11,6 @@ from optparse import OptionParser
 from collections import namedtuple
 
 
-class BadRequest(Exception):
-    pass
-
-
 class HTTPhelper:
     OK = 200
     FORBIDDEN = 403
