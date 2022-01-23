@@ -54,39 +54,40 @@ class HTTPhelper:
             kwargs.get('type', 'default')
         ]
         dct['Connection'] = 'close'
-        return '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
+        result_string = '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
+        return bytes(result_string.encode('utf-8'))
 
     @staticmethod
     def make_answer(code: int, file: Path or None = None,
-                    head_method: bool = False) -> bytes:
-        lead = bytes(
-            f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'.encode(
-                'utf-8'
-            )
-        )
+                    method: str or None = None) -> bytes:
+        """
+        Cook HTTP-answer with provided args.
+        """
+        string = f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'
+        lead = bytes(string.encode('utf-8'))
         if not code == 200:
             return lead
-        if file:
-            suffix = file.suffix()
-            length = os.path.getsize(file)
-            with open(file, 'rb') as f:
-                bytes_read = b'\r\n' + f.read()
-            headers = bytes(
-                HTTPhelper.make_heads(length=length, type=suffix).encode(
-                    'utf-8'
-                )
-            )
-            if not head_method:
-                return b'\r\n'.join((lead, headers, bytes_read))
-            else:  # answer HEAD method (only headers without content)
-                return b'\r\n'.join((lead, headers))
+        if not file:
+            headers = HTTPhelper.make_heads()
+            return b'\r\n'.join((lead, headers))
+        suffix = file.suffix
+        length = os.path.getsize(file)
+        with open(file, 'rb') as f:
+            bytes_read = b'\r\n' + f.read()
+        headers = HTTPhelper.make_heads(length=length, type=suffix)
+        if method == 'GET':
+            return b'\r\n'.join((lead, headers, bytes_read))
+        elif method == 'HEAD':  # only headers without content
+            return b'\r\n'.join((lead, headers))
 
     @staticmethod
     def get_request(arg: str) -> NamedTuple or None:
         splitted_first_string = arg.split('\r\n')[0].split()
         if len(splitted_first_string) != 3:
-            return
+            raise ValueError('Bad request')
         method = splitted_first_string[0]
+        if method not in ('GET', 'HEAD'):
+            raise ValueError(f'Ansupported method {method}')
         address = splitted_first_string[1]
         version = splitted_first_string[2]
         return HTTPhelper.request(method, address, version)
@@ -182,15 +183,40 @@ class MyServer:
         client_socket.sendall(data)
         logging.info('Send {} to {}'.format(data, client_socket))
 
-    @staticmethod
-    def handle_client_connection(client_socket, chunklen=2048):
+    def handle_client_connection(self, client_socket, chunklen=2048):
         logging.info('Handling request')
         data = client_socket.recv(chunklen)
         logging.info('Received {}'.format(data.decode('utf-8')))
-        HTTPhelper.get_request()
-        MyServer.send_answer(
-            b'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n'
-            b'Content-length: 3\r\n\nOK!', client_socket)
+        try:
+            request = HTTPhelper.get_request(data.decode('utf-8'))
+        except Exception as exc:
+            logging.error('Bad request. Exc: {}'.format(exc))
+            MyServer.send_answer(
+                HTTPhelper.make_answer(code=HTTPhelper.NOT_ALLOWED),
+                client_socket
+            )
+            return
+        logging.info('Got a valid request: {}'.format(repr(request)))
+        if request.address.endswith('/') and len(request.address) > 3:
+            file = self.basedir / Path(request.address) / Path('index.html')
+        elif request.address == '/':
+            file = self.basedir / Path('index.html')
+        else:
+            file = self.basedir / Path(request.address[1:])
+
+        assert isinstance(file, Path), '<file> not a Path instance'
+        if file.is_file():
+            answer = HTTPhelper.make_answer(code=HTTPhelper.OK,
+                                            file=file,
+                                            method=request.method)
+            logging.info('Sending back valid answer')
+            MyServer.send_answer(answer, client_socket)
+        else:
+            logging.info('No such file {}'.format(repr(file)))
+            MyServer.send_answer(
+                HTTPhelper.make_answer(code=HTTPhelper.NOT_FOUND),
+                client_socket
+            )
         client_socket.close()
 
     def serve_forever(self):
