@@ -1,9 +1,92 @@
 import socket
 import logging
 import threading
+from typing import NamedTuple
 import uuid
+import os
+from datetime import datetime
+from pathlib import Path
 from queue import Queue
 from optparse import OptionParser
+from collections import namedtuple
+
+
+class HTTPhelper:
+    OK = 200
+    FORBIDDEN = 403
+    NOT_FOUND = 404
+    NOT_ALLOWED = 405
+    codes = {200: 'OK', 403: 'FORBIDDEN', 404: 'NOT FOUND', 405: 'NOT ALLOWED'}
+    version = 'HTTP/1.0'
+    servername = 'OTUServer by AlexK'
+    headers = ['Date', 'Server', 'Content-Length', 'Content-Type',
+               'Connection']
+    methods = ['GET', 'HEAD']
+    content_types = {
+        '.html': 'text/html',
+        '.css': 'text/css',
+        '.js': 'text/javascript',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.swf': 'application/x-shockwave-flash',
+        'default': 'text/plain'
+    }
+    request = namedtuple('Request', ['method', 'address', 'version'])
+
+    @staticmethod
+    def make_heads(**kwargs) -> str:
+        """
+        kwargs expected:
+        * length - len(<content>)
+        * type - Path('file.suff').suffix()
+        """
+        dct = {h: '' for h in HTTPhelper.headers}
+        dct['Date'] = HTTPhelper.httpdate()
+        dct['Server'] = HTTPhelper.servername
+        dct['Content-Length'] = kwargs.get('length', '')
+        dct['Content-Type'] = HTTPhelper.content_types[
+            kwargs.get('type', 'default')
+        ]
+        dct['Connection'] = 'close'
+        return '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
+
+    @staticmethod
+    def make_answer(code, file=None, head=False):
+        lead = f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'
+        if not code == 200:
+            return bytes(lead.encode('utf-8'))
+        if file:
+            suffix = file.suffix()
+            length = os.path.getsize(file)
+            with open(file, 'rb') as f:
+                bytes_read = f.read()
+        heads = HTTPhelper.make_heads()
+
+    @staticmethod
+    def get_request(arg: str) -> NamedTuple:
+        splitted_first_string = arg.split('\r\n')[0].split()
+        method = splitted_first_string[0]
+        address = splitted_first_string[1]
+        version = splitted_first_string[2]
+        return HTTPhelper.request(method, address, version)
+
+    @staticmethod
+    def httpdate(dt: datetime = datetime.now()) -> str:
+        """
+        Return a string representation of a date according to RFC 1123
+        (HTTP/1.1)
+        """
+        weekday = ["Mon", "Tue", "Wed", "Thu",
+                   "Fri", "Sat", "Sun"][dt.weekday()]
+        month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+                 "Aug", "Sep", "Oct", "Nov", "Dec"][dt.month - 1]
+        string = "%s, %02d %s %04d %02d:%02d:%02d GMT" % (
+            weekday, dt.day, month,
+            dt.year, dt.hour, dt.minute, dt.second
+        )
+        return string
 
 
 class Worker(threading.Thread):
@@ -16,7 +99,6 @@ class Worker(threading.Thread):
         self.handler = handler
         self.__id = _id
         self.__shutdown_request = False
-        logging.info('Worker {} inited'.format(self.__id))
 
     def run(self):
         logging.info('Worker {} started'.format(self.__id))
@@ -36,30 +118,27 @@ class Worker(threading.Thread):
                 logging.info('Worker {} finished with {}'.format(
                     self.__id, addr))
             finally:
-                logging.info('Closing socket...')
-                client_socket.shutdown(socket.SHUT_RDWR)
-                client_socket.close()
                 self.queue.task_done()
                 logging.info('Task done')
 
 
 class MyServer:
 
-    def __init__(self, host: str, port: int, max_workers: int = 10,
-                 timeout: float = 5.0):
+    def __init__(self, host: str, port: int, max_workers: int = 3,
+                 timeout: float = 5.0, basedir: str = '.'):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.max_workers = max_workers
         self.timeout = timeout
+        self.basedir = Path(basedir)
+        if not self.basedir.is_dir():
+            raise LookupError(f'{basedir} is not a directory')
         self.server_socket.bind((self.host, self.port))
         self.__shutdown_request = False
         self.queue = Queue()
         self.worker_pool = []
-        assert self.init_workers(), (
-            f'Not all the workers inited '
-            f'({len(self.worker_pool)} of {self.max_workers})'
-        )
+        self.init_workers()
 
     def init_workers(self):
         for number in range(self.max_workers):
@@ -85,31 +164,24 @@ class MyServer:
         logging.info('Send {} to {}'.format(data, client_socket))
 
     @staticmethod
-    def handle_client_connection(client_socket, chunklen=1024):
+    def handle_client_connection(client_socket, chunklen=2048):
         logging.info('Handling request')
-        fragments = []
-        while True:
-            chunk = client_socket.recv(chunklen)
-            logging.info('Got a chunk: {}'.format(chunk))
-            if not chunk:
-                logging.info('Breaking (zero chunk)')
-                break
-            if chunk.decode('utf-8').endswith('\r\n\r\n'):
-                fragments.append(chunk.decode('utf-8'))
-                break
-            fragments.append(chunk.decode('utf-8'))
-        request = ''.join(fragments)
-        logging.info('Received {}'.format(request))
-        MyServer.send_answer(b'ACK!\r\n', client_socket)
+        data = client_socket.recv(chunklen)
+        logging.info('Received {}'.format(data.decode('utf-8')))
+        MyServer.send_answer(
+            b'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n'
+            b'Content-length: 3\r\n\nOK!', client_socket)
+        client_socket.close()
 
     def serve_forever(self):
         logging.info('Starting workers...')
         self.start_workers()
         logging.info('Listening at {}:{}...'.format(self.host, self.port))
+        logging.info('Serving files from: {}'.format(self.basedir.absolute()))
         self.server_socket.listen(5)
         while not self.__shutdown_request:
             client_socket, addr = self.server_socket.accept()
-            logging.info('Connected by %r' % repr(addr))
+            logging.info('Connected by {}'.format(repr(addr)))
             client_socket.settimeout(self.timeout)
             self.queue.put((client_socket, addr))
 
@@ -122,8 +194,10 @@ class MyServer:
 
 if __name__ == '__main__':
     op = OptionParser()
-    # op.add_option("-h", "--host", action="store", type=str, default="")
     op.add_option("-p", "--port", action="store", type=int, default=8080)
+    op.add_option("-r", "--root", action="store", type='string', default='.')
+    op.add_option("-w", "--workers", action="store", type=int, default=3)
+    op.add_option("-t", "--timeout", action="store", type=float, default=3.0)
     op.add_option("-l", "--log", action="store", default=None)
     (opts, args) = op.parse_args()
     logging.basicConfig(
@@ -131,7 +205,9 @@ if __name__ == '__main__':
         format='[%(asctime)s] %(levelname).1s %(message)s',
         datefmt='%Y.%m.%d %H:%M:%S'
     )
-    server = MyServer(host='localhost', port=opts.port)
+    server = MyServer(host=args[0] if len(args) else '', port=opts.port,
+                      max_workers=opts.workers,
+                      timeout=opts.timeout, basedir=opts.root)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
