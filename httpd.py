@@ -11,6 +11,10 @@ from optparse import OptionParser
 from collections import namedtuple
 
 
+class BadRequest(Exception):
+    pass
+
+
 class HTTPhelper:
     OK = 200
     FORBIDDEN = 403
@@ -53,20 +57,35 @@ class HTTPhelper:
         return '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
 
     @staticmethod
-    def make_answer(code, file=None, head=False):
-        lead = f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'
+    def make_answer(code: int, file: Path or None = None,
+                    head_method: bool = False) -> bytes:
+        lead = bytes(
+            f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'.encode(
+                'utf-8'
+            )
+        )
         if not code == 200:
-            return bytes(lead.encode('utf-8'))
+            return lead
         if file:
             suffix = file.suffix()
             length = os.path.getsize(file)
             with open(file, 'rb') as f:
-                bytes_read = f.read()
-        heads = HTTPhelper.make_heads()
+                bytes_read = b'\r\n' + f.read()
+            headers = bytes(
+                HTTPhelper.make_heads(length=length, type=suffix).encode(
+                    'utf-8'
+                )
+            )
+            if not head_method:
+                return b'\r\n'.join((lead, headers, bytes_read))
+            else:  # answer HEAD method (only headers without content)
+                return b'\r\n'.join((lead, headers))
 
     @staticmethod
-    def get_request(arg: str) -> NamedTuple:
+    def get_request(arg: str) -> NamedTuple or None:
         splitted_first_string = arg.split('\r\n')[0].split()
+        if len(splitted_first_string) != 3:
+            return
         method = splitted_first_string[0]
         address = splitted_first_string[1]
         version = splitted_first_string[2]
@@ -168,6 +187,7 @@ class MyServer:
         logging.info('Handling request')
         data = client_socket.recv(chunklen)
         logging.info('Received {}'.format(data.decode('utf-8')))
+        HTTPhelper.get_request()
         MyServer.send_answer(
             b'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n'
             b'Content-length: 3\r\n\nOK!', client_socket)
