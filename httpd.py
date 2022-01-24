@@ -1,6 +1,7 @@
 import socket
 import logging
 import threading
+import traceback
 from typing import NamedTuple
 import uuid
 import os
@@ -32,6 +33,7 @@ class HTTPhelper:
         '.png': 'image/png',
         '.gif': 'image/gif',
         '.swf': 'application/x-shockwave-flash',
+        '.txt': 'text/plain',
         'default': 'text/plain'
     }
     request = namedtuple(
@@ -49,9 +51,10 @@ class HTTPhelper:
         dct['Date'] = HTTPhelper.httpdate()
         dct['Server'] = HTTPhelper.servername
         dct['Content-Length'] = kwargs.get('length', '')
-        dct['Content-Type'] = HTTPhelper.content_types[
-            kwargs.get('type', 'default')
-        ]
+        dct['Content-Type'] = HTTPhelper.content_types.get(
+            kwargs.get('type', 'default'),
+            'text/plain'
+        )
         dct['Connection'] = 'close'
         result_string = '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
         result_string += '\r\n'
@@ -76,6 +79,7 @@ class HTTPhelper:
         if method == 'GET':
             return b'\r\n'.join((lead, headers, bytes_read))
         elif method == 'HEAD':  # only headers without content
+            headers += b'\r\n'
             return b'\r\n'.join((lead, headers))
 
     @staticmethod
@@ -87,10 +91,11 @@ class HTTPhelper:
         if method not in ('GET', 'HEAD'):
             raise ValueError(f'Ansupported method {method}')
         address = unquote(splitted_first_string[1])
-        if '?' in address:
-            address, query_string = address.split('?')[1]
         version = splitted_first_string[2]
-        return HTTPhelper.request(method, address, version, query_string)
+        if '?' in address:
+            address, query_string = address.split('?')
+            return HTTPhelper.request(method, address, version, query_string)
+        return HTTPhelper.request(method, address, version)
 
     @staticmethod
     def httpdate(dt: datetime = datetime.now()) -> str:
@@ -138,6 +143,10 @@ class Worker(threading.Thread):
                 logging.info('Worker {} finished with {}'.format(
                     self.__id, addr))
             finally:
+                try:
+                    client_socket.close()
+                except Exception:
+                    pass
                 self.queue.task_done()
                 logging.info('Task done')
 
@@ -181,6 +190,8 @@ class MyServer:
     @staticmethod
     def send_answer(data, client_socket):
         client_socket.sendall(data)
+        if len(data) > 70:
+            data = data[:70]
         logging.info('Send {} to {}'.format(data, client_socket))
 
     def handle_client_connection(self, client_socket, chunklen=2048):
@@ -195,6 +206,7 @@ class MyServer:
                 HTTPhelper.make_answer(code=HTTPhelper.NOT_ALLOWED),
                 client_socket
             )
+            client_socket.close()
             return
         logging.info('Got a valid request: {}'.format(repr(request)))
         if request.address.endswith('/') and len(request.address) > 3:
@@ -202,6 +214,14 @@ class MyServer:
             file = self.basedir / Path(addr) / Path('index.html')
         elif request.address == '/':
             file = self.basedir / Path('index.html')
+        elif '../' in request.address:
+            logging.info('Someone tried to escape path root!')
+            MyServer.send_answer(
+                HTTPhelper.make_answer(code=HTTPhelper.FORBIDDEN),
+                client_socket
+            )
+            client_socket.close()
+            return
         else:
             file = self.basedir / Path(request.address[1:])
 
