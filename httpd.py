@@ -4,6 +4,7 @@ import threading
 from typing import NamedTuple
 import uuid
 import os
+from urllib.parse import unquote
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -33,7 +34,9 @@ class HTTPhelper:
         '.swf': 'application/x-shockwave-flash',
         'default': 'text/plain'
     }
-    request = namedtuple('Request', ['method', 'address', 'version'])
+    request = namedtuple(
+        'Request', ['method', 'address', 'version', 'query_string'],
+        defaults=(None,))
 
     @staticmethod
     def make_heads(**kwargs) -> str:
@@ -51,6 +54,7 @@ class HTTPhelper:
         ]
         dct['Connection'] = 'close'
         result_string = '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
+        result_string += '\r\n'
         return bytes(result_string.encode('utf-8'))
 
     @staticmethod
@@ -61,15 +65,13 @@ class HTTPhelper:
         """
         string = f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'
         lead = bytes(string.encode('utf-8'))
-        if not code == 200:
-            return lead
-        if not file:
+        if not code == 200 or not file:
             headers = HTTPhelper.make_heads()
             return b'\r\n'.join((lead, headers))
         suffix = file.suffix
         length = os.path.getsize(file)
         with open(file, 'rb') as f:
-            bytes_read = b'\r\n' + f.read()
+            bytes_read = f.read()
         headers = HTTPhelper.make_heads(length=length, type=suffix)
         if method == 'GET':
             return b'\r\n'.join((lead, headers, bytes_read))
@@ -84,9 +86,11 @@ class HTTPhelper:
         method = splitted_first_string[0]
         if method not in ('GET', 'HEAD'):
             raise ValueError(f'Ansupported method {method}')
-        address = splitted_first_string[1]
+        address = unquote(splitted_first_string[1])
+        if '?' in address:
+            address, query_string = address.split('?')[1]
         version = splitted_first_string[2]
-        return HTTPhelper.request(method, address, version)
+        return HTTPhelper.request(method, address, version, query_string)
 
     @staticmethod
     def httpdate(dt: datetime = datetime.now()) -> str:
@@ -194,7 +198,8 @@ class MyServer:
             return
         logging.info('Got a valid request: {}'.format(repr(request)))
         if request.address.endswith('/') and len(request.address) > 3:
-            file = self.basedir / Path(request.address) / Path('index.html')
+            addr = request.address[1:-1]  # get rid of starting and ending /
+            file = self.basedir / Path(addr) / Path('index.html')
         elif request.address == '/':
             file = self.basedir / Path('index.html')
         else:
