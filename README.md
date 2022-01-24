@@ -2,6 +2,8 @@
 
 Example simple HTTP server written around sockets. Spawns requested number of workers in separate threads ('pool of threads' was not 100% implemented). Serves "HEAD" and "GET" HTTP-requests.
 
+Tests (httptest.py and httptest dir): https://github.com/s-stupnikov/http-test-suite
+
 ## Table of contents
 1. [Usage](#usage)
 2. [Benchmark](#benchmark)
