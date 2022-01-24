@@ -1,7 +1,6 @@
 import socket
 import logging
 import threading
-import traceback
 from typing import NamedTuple
 import uuid
 import os
@@ -131,7 +130,7 @@ class Worker(threading.Thread):
             client_socket, addr = self.queue.get()
             if client_socket is None and addr is None:
                 break
-            logging.info('Worker {} manages request from {}'.format(
+            logging.debug('Worker {} manages request from {}'.format(
                 self.__id, addr))
             try:
                 self.handler(client_socket)
@@ -140,7 +139,7 @@ class Worker(threading.Thread):
                     'Worker {} cannot handle {}. Error: {}'.format(
                         self.__id, addr, exc))
             else:
-                logging.info('Worker {} finished with {}'.format(
+                logging.debug('Worker {} finished with {}'.format(
                     self.__id, addr))
             finally:
                 try:
@@ -148,7 +147,7 @@ class Worker(threading.Thread):
                 except Exception:
                     pass
                 self.queue.task_done()
-                logging.info('Task done')
+                logging.debug('Task done')
 
 
 class MyServer:
@@ -192,12 +191,12 @@ class MyServer:
         client_socket.sendall(data)
         if len(data) > 70:
             data = data[:70]
-        logging.info('Send {} to {}'.format(data, client_socket))
+        logging.debug('Send {} to {}'.format(data, client_socket))
 
     def handle_client_connection(self, client_socket, chunklen=2048):
-        logging.info('Handling request')
+        logging.debug('Handling request')
         data = client_socket.recv(chunklen)
-        logging.info('Received {}'.format(data.decode('utf-8')))
+        logging.debug('Received {}'.format(data.decode('utf-8')))
         try:
             request = HTTPhelper.get_request(data.decode('utf-8'))
         except Exception as exc:
@@ -230,7 +229,7 @@ class MyServer:
             answer = HTTPhelper.make_answer(code=HTTPhelper.OK,
                                             file=file,
                                             method=request.method)
-            logging.info('Sending back valid answer')
+            logging.debug('Sending back valid answer')
             MyServer.send_answer(answer, client_socket)
         else:
             logging.info('No such file {}'.format(repr(file)))
