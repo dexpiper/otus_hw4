@@ -27,27 +27,10 @@ All tests of httptest.py completed successfully.
 
 ## Benchmark
 
-Results (with -w 3):
-
 `$ ab -n 50000 -c 100 -r http://localhost:8080/`
 
 This is ApacheBench, Version 2.3 <$Revision: 1879490 $>
-Copyright 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
-Licensed to The Apache Software Foundation, http://www.apache.org/
-
-Benchmarking localhost (be patient)
-Completed 5000 requests
-Completed 10000 requests
-Completed 15000 requests
-Completed 20000 requests
-Completed 25000 requests
-Completed 30000 requests
-Completed 35000 requests
-Completed 40000 requests
-Completed 45000 requests
-Completed 50000 requests
-Finished 50000 requests
-
+<...>
 
 Server Software:        OTUServer
 Server Hostname:        localhost
@@ -57,30 +40,30 @@ Document Path:          /
 Document Length:        365 bytes
 
 Concurrency Level:      100
-Time taken for tests:   20.618 seconds
+Time taken for tests:   23.643 seconds
 Complete requests:      50000
 Failed requests:        0
 Total transferred:      25700000 bytes
 HTML transferred:       18250000 bytes
-Requests per second:    2425.02 [#/sec] (mean)
-Time per request:       41.237 [ms] (mean)
-Time per request:       0.412 [ms] (mean, across all concurrent requests)
-Transfer rate:          1217.24 [Kbytes/sec] received
+Requests per second:    2114.79 [#/sec] (mean)
+Time per request:       47.286 [ms] (mean)
+Time per request:       0.473 [ms] (mean, across all concurrent requests)
+Transfer rate:          1061.53 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
-Connect:        0    3  54.6      0    1035
-Processing:     2   38  12.7     39     873
-Waiting:        2   38  12.7     39     873
-Total:          8   41  61.3     39    1885
+Connect:        0    2  46.3      0    1032
+Processing:     2   45   5.8     45     465
+Waiting:        1   45   5.7     45     465
+Total:          7   47  48.0     45    1492
 
 Percentage of the requests served within a certain time (ms)
-  50%     39
-  66%     39
-  75%     40
-  80%     40
-  90%     42
-  95%     44
-  98%     49
-  99%     55
- 100%   1885 (longest request)
+  50%     45
+  66%     46
+  75%     47
+  80%     47
+  90%     49
+  95%     52
+  98%     57
+  99%     61
+ 100%   1492 (longest request)
