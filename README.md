@@ -27,43 +27,43 @@ All tests of httptest.py completed successfully.
 
 ## Benchmark
 
-`$ ab -n 50000 -c 100 -r http://localhost:8080/`
+`$ ab -n 50000 -c 100 -r http://localhost:8080/`  
 
-This is ApacheBench, Version 2.3 <$Revision: 1879490 $>
-<...>
-
-Server Software:        OTUServer
-Server Hostname:        localhost
-Server Port:            8080
-
-Document Path:          /
-Document Length:        365 bytes
-
-Concurrency Level:      100
-Time taken for tests:   23.643 seconds
-Complete requests:      50000
-Failed requests:        0
-Total transferred:      25700000 bytes
-HTML transferred:       18250000 bytes
-Requests per second:    2114.79 [#/sec] (mean)
-Time per request:       47.286 [ms] (mean)
-Time per request:       0.473 [ms] (mean, across all concurrent requests)
-Transfer rate:          1061.53 [Kbytes/sec] received
-
-Connection Times (ms)
-              min  mean[+/-sd] median   max
-Connect:        0    2  46.3      0    1032
-Processing:     2   45   5.8     45     465
-Waiting:        1   45   5.7     45     465
-Total:          7   47  48.0     45    1492
-
-Percentage of the requests served within a certain time (ms)
-  50%     45
-  66%     46
-  75%     47
-  80%     47
-  90%     49
-  95%     52
-  98%     57
-  99%     61
- 100%   1492 (longest request)
+This is ApacheBench, Version 2.3 <$Revision: 1879490 $>  
+<...>  
+  
+Server Software:        OTUServer  
+Server Hostname:        localhost  
+Server Port:            8080  
+  
+Document Path:          /  
+Document Length:        365 bytes  
+  
+Concurrency Level:      100  
+Time taken for tests:   23.643 seconds  
+Complete requests:      50000  
+Failed requests:        0  
+Total transferred:      25700000 bytes  
+HTML transferred:       18250000 bytes  
+Requests per second:    2114.79 [#/sec] (mean)  
+Time per request:       47.286 [ms] (mean)  
+Time per request:       0.473 [ms] (mean, across all concurrent requests)  
+Transfer rate:          1061.53 [Kbytes/sec] received  
+  
+Connection Times (ms)  
+              min  mean[+/-sd] median   max  
+Connect:        0    2  46.3      0    1032  
+Processing:     2   45   5.8     45     465  
+Waiting:        1   45   5.7     45     465  
+Total:          7   47  48.0     45    1492  
+  
+Percentage of the requests served within a certain time (ms)  
+  50%     45  
+  66%     46  
+  75%     47  
+  80%     47  
+  90%     49  
+  95%     52  
+  98%     57  
+  99%     61  
+ 100%   1492 (longest request)  
