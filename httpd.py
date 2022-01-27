@@ -125,35 +125,32 @@ class Worker(threading.Thread):
         self.__shutdown_request = False
 
     def run(self):
-        logging.info('Worker {} started'.format(self.__id))
+        logging.info(f'Worker {self.__id} started')
         while not self.__shutdown_request:
             client_socket, addr = self.queue.get()
             if client_socket is None and addr is None:
                 break
-            logging.debug('Worker {} manages request from {}'.format(
-                self.__id, addr))
+            logging.debug(f'Worker {self.__id} manages request from {addr}')
             try:
                 self.handler(client_socket)
             except Exception as exc:
                 logging.error(
-                    'Worker {} cannot handle {}. Error: {}'.format(
-                        self.__id, addr, exc))
+                    f'Worker {self.__id} cannot handle {addr}. Error: {exc}')
             else:
-                logging.debug('Worker {} finished with {}'.format(
-                    self.__id, addr))
+                logging.debug(f'Worker {self.__id} finished with {addr}')
             finally:
                 try:
                     client_socket.close()
                 except Exception:
                     pass
                 self.queue.task_done()
-                logging.debug('Task done')
 
 
 class MyServer:
 
     def __init__(self, host: str, port: int, max_workers: int = 3,
-                 timeout: float = 5.0, basedir: str = '.'):
+                 timeout: float = 5.0, basedir: str = '.',
+                 bind: bool = True, chunklen=24):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -161,12 +158,21 @@ class MyServer:
         self.timeout = timeout
         self.basedir = Path(basedir)
         if not self.basedir.is_dir():
-            raise LookupError(f'{basedir} is not a directory')
-        self.server_socket.bind((self.host, self.port))
+            raise FileNotFoundError(f'{basedir} is not a directory')
         self.__shutdown_request = False
         self.queue = Queue()
         self.worker_pool = []
-        self.init_workers()
+        self.chunklen = chunklen
+        self._bind = bind
+        if bind:
+            self.bind_server_socket()
+
+    def bind_server_socket(self):
+        try:
+            self.server_socket.bind((self.host, self.port))
+        except Exception:
+            self.close()
+            raise
 
     def init_workers(self):
         for number in range(self.max_workers):
@@ -191,40 +197,64 @@ class MyServer:
         client_socket.sendall(data)
         if len(data) > 70:
             data = data[:70]
-        logging.debug('Send {} to {}'.format(data, client_socket))
+        logging.debug(f'Send {data} to {client_socket}')
 
-    def handle_client_connection(self, client_socket, chunklen=2048):
-        logging.debug('Handling request')
-        data = client_socket.recv(chunklen)
-        logging.debug('Received {}'.format(data.decode('utf-8')))
-        try:
-            request = HTTPhelper.get_request(data.decode('utf-8'))
-        except Exception as exc:
-            logging.error('Bad request. Exc: {}'.format(exc))
-            MyServer.send_answer(
-                HTTPhelper.make_answer(code=HTTPhelper.NOT_ALLOWED),
-                client_socket
-            )
-            client_socket.close()
-            return
-        logging.info('Got a valid request: {}'.format(repr(request)))
+    def check_file_path(self, request, client_socket) -> Path or None:
         if request.address.endswith('/') and len(request.address) > 3:
             addr = request.address[1:-1]  # get rid of starting and ending /
             file = self.basedir / Path(addr) / Path('index.html')
         elif request.address == '/':
             file = self.basedir / Path('index.html')
-        elif '../' in request.address:
-            logging.info('Someone tried to escape path root!')
+        else:
+            file = self.basedir / Path(request.address[1:])
+        if self.basedir.resolve() not in file.resolve().parents:
+            logging.info('Someone tried to escape basedir. Forbidden')
             MyServer.send_answer(
                 HTTPhelper.make_answer(code=HTTPhelper.FORBIDDEN),
                 client_socket
             )
             client_socket.close()
             return
-        else:
-            file = self.basedir / Path(request.address[1:])
+        return file
 
-        assert isinstance(file, Path), '<file> not a Path instance'
+    def get_and_check_request(self, data, client_socket) -> NamedTuple:
+        try:
+            request = HTTPhelper.get_request(data)
+            return request
+        except Exception as exc:
+            logging.error(f'Bad request. Exc: {exc}')
+            MyServer.send_answer(
+                HTTPhelper.make_answer(code=HTTPhelper.NOT_ALLOWED),
+                client_socket
+            )
+            client_socket.close()
+
+    def read_response(self, client_socket) -> str:
+        buf = b''
+        delim = b'\r\n\r\n'
+        while True:
+            r = client_socket.recv(self.chunklen)
+            if delim not in r:
+                buf += r
+                if delim in buf:
+                    buf = buf.split(delim)[0]
+                    break
+            elif delim in r:
+                buf += r.split(delim)[0]
+                break
+            elif not r:
+                raise socket.error('Server closed connection')
+        logging.debug(f'Received {buf}')
+        return buf.decode('utf-8')
+
+    def handle_client_connection(self, client_socket):
+        data = self.read_response(client_socket)
+        request = self.get_and_check_request(data, client_socket)
+        if not request:
+            return
+        file = self.check_file_path(request, client_socket)
+        if not file:
+            return
         if file.is_file():
             answer = HTTPhelper.make_answer(code=HTTPhelper.OK,
                                             file=file,
@@ -232,7 +262,7 @@ class MyServer:
             logging.debug('Sending back valid answer')
             MyServer.send_answer(answer, client_socket)
         else:
-            logging.info('No such file {}'.format(repr(file)))
+            logging.info(f'No such file {repr(file)}')
             MyServer.send_answer(
                 HTTPhelper.make_answer(code=HTTPhelper.NOT_FOUND),
                 client_socket
@@ -240,14 +270,17 @@ class MyServer:
         client_socket.close()
 
     def serve_forever(self):
+        if not self._bind:
+            self.bind_server_socket()
+        self.init_workers()
         logging.info('Starting workers...')
         self.start_workers()
-        logging.info('Listening at {}:{}...'.format(self.host, self.port))
-        logging.info('Serving files from: {}'.format(self.basedir.absolute()))
+        logging.info(f'Listening at {self.host}:{self.port}...')
+        logging.info(f'Serving files from: {self.basedir.absolute()}')
         self.server_socket.listen(5)
         while not self.__shutdown_request:
             client_socket, addr = self.server_socket.accept()
-            logging.info('Connected by {}'.format(repr(addr)))
+            logging.info(f'Connected by {repr(addr)}')
             client_socket.settimeout(self.timeout)
             self.queue.put((client_socket, addr))
 
@@ -265,9 +298,10 @@ if __name__ == '__main__':
     op.add_option("-w", "--workers", action="store", type=int, default=3)
     op.add_option("-t", "--timeout", action="store", type=float, default=3.0)
     op.add_option("-l", "--log", action="store", default=None)
+    op.add_option("-v", "--level", action="store", type=int, default=None)
     (opts, args) = op.parse_args()
     logging.basicConfig(
-        filename=opts.log, level=logging.INFO,
+        filename=opts.log, level=opts.level or logging.INFO,
         format='[%(asctime)s] %(levelname).1s %(message)s',
         datefmt='%Y.%m.%d %H:%M:%S'
     )
