@@ -319,7 +319,9 @@ class HttpServer(unittest.TestCase):
     self.assertEqual(int(r.status), 200)
     self.assertEqual(int(length), 35344)
     self.assertEqual(len(data), 35344)
-    self.assertEqual(ctype, "application/x-shockwave-flash")
+    self.assertIn(ctype, (
+      "application/x-shockwave-flash", "application/vnd.adobe.flash.movie")
+    )
 
 loader = unittest.TestLoader()
 suite = unittest.TestSuite()

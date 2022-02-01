@@ -1,116 +1,99 @@
-import socket
 import logging
-import threading
-from typing import NamedTuple
-import uuid
+import mimetypes
 import os
-from urllib.parse import unquote
+import socket
+import threading
+import uuid
+from collections import namedtuple
 from datetime import datetime
+from http import HTTPStatus
+from optparse import OptionParser
 from pathlib import Path
 from queue import Queue
-from optparse import OptionParser
-from collections import namedtuple
+from typing import NamedTuple
+from urllib.parse import unquote
 
 
 class HTTPhelper:
-    OK = 200
-    FORBIDDEN = 403
-    NOT_FOUND = 404
-    NOT_ALLOWED = 405
-    codes = {200: 'OK', 403: 'FORBIDDEN', 404: 'NOT FOUND', 405: 'NOT ALLOWED'}
     version = 'HTTP/1.0'
     servername = 'OTUServer by AlexK'
     headers = ['Date', 'Server', 'Content-Length', 'Content-Type',
                'Connection']
-    methods = ['GET', 'HEAD']
-    content_types = {
-        '.html': 'text/html',
-        '.css': 'text/css',
-        '.js': 'text/javascript',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.swf': 'application/x-shockwave-flash',
-        '.txt': 'text/plain',
-        'default': 'text/plain'
-    }
     request = namedtuple(
         'Request', ['method', 'address', 'version', 'query_string'],
         defaults=(None,))
 
-    @staticmethod
-    def make_heads(**kwargs) -> str:
-        """
-        kwargs expected:
-        * length - len(<content>)
-        * type - Path('file.suff').suffix()
-        """
-        dct = {h: '' for h in HTTPhelper.headers}
-        dct['Date'] = HTTPhelper.httpdate()
-        dct['Server'] = HTTPhelper.servername
-        dct['Content-Length'] = kwargs.get('length', '')
-        dct['Content-Type'] = HTTPhelper.content_types.get(
-            kwargs.get('type', 'default'),
-            'text/plain'
-        )
-        dct['Connection'] = 'close'
-        result_string = '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
-        result_string += '\r\n'
-        return bytes(result_string.encode('utf-8'))
 
-    @staticmethod
-    def make_answer(code: int, file: Path or None = None,
-                    method: str or None = None) -> bytes:
-        """
-        Cook HTTP-answer with provided args.
-        """
-        string = f'{HTTPhelper.version} {code} {HTTPhelper.codes[code]}'
-        lead = bytes(string.encode('utf-8'))
-        if not code == 200 or not file:
-            headers = HTTPhelper.make_heads()
-            return b'\r\n'.join((lead, headers))
-        suffix = file.suffix
-        length = os.path.getsize(file)
+def make_heads(**kwargs) -> str:
+    """
+    kwargs expected:
+    * length - len(<content>)
+    * type - Path('file.suff').suffix()
+    """
+    dct = {h: '' for h in HTTPhelper.headers}
+    dct['Date'] = httpdate()
+    dct['Server'] = HTTPhelper.servername
+    dct['Content-Length'] = kwargs.get('length', '')
+    file = kwargs.get('file')
+    if file:
+        dct['Content-Type'] = mimetypes.guess_type(
+            kwargs.get('file'))[0] or 'text/plain'
+    dct['Connection'] = 'close'
+    result_string = '\r\n'.join([f'{h}: {v}' for h, v in dct.items() if v])
+    result_string += '\r\n'
+    return bytes(result_string.encode('utf-8'))
+
+
+def make_answer(code: HTTPStatus, file: Path or None = None,
+                method: str or None = None) -> bytes:
+    """
+    Cook HTTP-answer with provided args.
+    """
+    string = f'{HTTPhelper.version} {code.value} {code.phrase}'
+    lead = bytes(string.encode('utf-8'))
+    if not code == 200 or not file:
+        headers = make_heads()
+        return b'\r\n'.join((lead, headers))
+    length = os.path.getsize(file)
+    headers = make_heads(length=length, file=file)
+    if method == 'GET':
         with open(file, 'rb') as f:
             bytes_read = f.read()
-        headers = HTTPhelper.make_heads(length=length, type=suffix)
-        if method == 'GET':
-            return b'\r\n'.join((lead, headers, bytes_read))
-        elif method == 'HEAD':  # only headers without content
-            headers += b'\r\n'
-            return b'\r\n'.join((lead, headers))
+        return b'\r\n'.join((lead, headers, bytes_read))
+    elif method == 'HEAD':  # only headers without content
+        headers += b'\r\n'
+        return b'\r\n'.join((lead, headers))
 
-    @staticmethod
-    def get_request(arg: str) -> NamedTuple or None:
-        splitted_first_string = arg.split('\r\n')[0].split()
-        if len(splitted_first_string) != 3:
-            raise ValueError('Bad request')
-        method = splitted_first_string[0]
-        if method not in ('GET', 'HEAD'):
-            raise ValueError(f'Ansupported method {method}')
-        address = unquote(splitted_first_string[1])
-        version = splitted_first_string[2]
-        if '?' in address:
-            address, query_string = address.split('?')
-            return HTTPhelper.request(method, address, version, query_string)
-        return HTTPhelper.request(method, address, version)
 
-    @staticmethod
-    def httpdate(dt: datetime = datetime.now()) -> str:
-        """
-        Return a string representation of a date according to RFC 1123
-        (HTTP/1.1)
-        """
-        weekday = ["Mon", "Tue", "Wed", "Thu",
-                   "Fri", "Sat", "Sun"][dt.weekday()]
-        month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
-                 "Aug", "Sep", "Oct", "Nov", "Dec"][dt.month - 1]
-        string = "%s, %02d %s %04d %02d:%02d:%02d GMT" % (
-            weekday, dt.day, month,
-            dt.year, dt.hour, dt.minute, dt.second
-        )
-        return string
+def get_request(arg: str) -> NamedTuple or None:
+    splitted_first_string = arg.split('\r\n')[0].split()
+    if len(splitted_first_string) != 3:
+        raise ValueError('Bad request')
+    method = splitted_first_string[0]
+    if method not in ('GET', 'HEAD'):
+        raise ValueError(f'Ansupported method {method}')
+    address = unquote(splitted_first_string[1])
+    version = splitted_first_string[2]
+    if '?' in address:
+        address, query_string = address.split('?')
+        return HTTPhelper.request(method, address, version, query_string)
+    return HTTPhelper.request(method, address, version)
+
+
+def httpdate(dt: datetime = datetime.now()) -> str:
+    """
+    Return a string representation of a date according to RFC 1123
+    (HTTP/1.1)
+    """
+    weekday = ["Mon", "Tue", "Wed", "Thu",
+               "Fri", "Sat", "Sun"][dt.weekday()]
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+             "Aug", "Sep", "Oct", "Nov", "Dec"][dt.month - 1]
+    string = "%s, %02d %s %04d %02d:%02d:%02d GMT" % (
+        weekday, dt.day, month,
+        dt.year, dt.hour, dt.minute, dt.second
+    )
+    return string
 
 
 class Worker(threading.Thread):
@@ -135,7 +118,10 @@ class Worker(threading.Thread):
                 self.handler(client_socket)
             except Exception as exc:
                 logging.error(
-                    f'Worker {self.__id} cannot handle {addr}. Error: {exc}')
+                    f'Worker {self.__id} cannot handle {addr}. '
+                    f'Error: {exc.with_traceback(exc.__traceback__)}'
+                )
+                raise  # TODO remove!
             else:
                 logging.debug(f'Worker {self.__id} finished with {addr}')
             finally:
@@ -210,7 +196,7 @@ class MyServer:
         if self.basedir.resolve() not in file.resolve().parents:
             logging.info('Someone tried to escape basedir. Forbidden')
             MyServer.send_answer(
-                HTTPhelper.make_answer(code=HTTPhelper.FORBIDDEN),
+                make_answer(code=HTTPStatus.FORBIDDEN),
                 client_socket
             )
             client_socket.close()
@@ -219,12 +205,12 @@ class MyServer:
 
     def get_and_check_request(self, data, client_socket) -> NamedTuple:
         try:
-            request = HTTPhelper.get_request(data)
+            request = get_request(data)
             return request
         except Exception as exc:
             logging.error(f'Bad request. Exc: {exc}')
             MyServer.send_answer(
-                HTTPhelper.make_answer(code=HTTPhelper.NOT_ALLOWED),
+                make_answer(code=HTTPStatus.METHOD_NOT_ALLOWED),
                 client_socket
             )
             client_socket.close()
@@ -234,13 +220,9 @@ class MyServer:
         delim = b'\r\n\r\n'
         while True:
             r = client_socket.recv(self.chunklen)
-            if delim not in r:
-                buf += r
-                if delim in buf:
-                    buf = buf.split(delim)[0]
-                    break
-            elif delim in r:
-                buf += r.split(delim)[0]
+            buf += r
+            if delim in buf:
+                buf = buf.split(delim)[0]
                 break
             elif not r:
                 raise socket.error('Server closed connection')
@@ -256,15 +238,15 @@ class MyServer:
         if not file:
             return
         if file.is_file():
-            answer = HTTPhelper.make_answer(code=HTTPhelper.OK,
-                                            file=file,
-                                            method=request.method)
+            answer = make_answer(code=HTTPStatus.OK,
+                                 file=file,
+                                 method=request.method)
             logging.debug('Sending back valid answer')
             MyServer.send_answer(answer, client_socket)
         else:
             logging.info(f'No such file {repr(file)}')
             MyServer.send_answer(
-                HTTPhelper.make_answer(code=HTTPhelper.NOT_FOUND),
+                make_answer(code=HTTPStatus.NOT_FOUND),
                 client_socket
             )
         client_socket.close()
