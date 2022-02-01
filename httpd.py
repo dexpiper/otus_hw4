@@ -121,7 +121,6 @@ class Worker(threading.Thread):
                     f'Worker {self.__id} cannot handle {addr}. '
                     f'Error: {exc.with_traceback(exc.__traceback__)}'
                 )
-                raise  # TODO remove!
             else:
                 logging.debug(f'Worker {self.__id} finished with {addr}')
             finally:
